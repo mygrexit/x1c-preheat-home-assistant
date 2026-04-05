@@ -1,0 +1,15 @@
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Local-only reference files
+entity_overview.yaml

@@ -1,0 +1,1017 @@
+# =============================================================================
+# X1C Enclosure Heater — HA Package
+# =============================================================================
+# Load this package via configuration.yaml:
+#   homeassistant:
+#     packages:
+#       x1c_enclosure: !include packages/x1c_enclosure.yaml
+#
+# Or when cloned to /config/bambu-heater/:
+#   homeassistant:
+#     packages:
+#       x1c_enclosure: !include bambu-heater/packages/x1c_enclosure.yaml
+# =============================================================================
+
+# --- Generic Thermostat (UI Widget + Safety Cutoff) ---
+climate:
+  - platform: generic_thermostat
+    unique_id: x1c_enclosure_thermostat
+    name: "X1C Enclosure Thermostat"
+    heater: switch.x1c_heater
+    target_sensor: sensor.x1c_heater_temperatur
+    min_temp: 20
+    max_temp: 75
+    target_temp: 70
+    cold_tolerance: 0.5
+    hot_tolerance: 0.5
+    min_cycle_duration:
+      minutes: 1
+    initial_hvac_mode: "off"
+    precision: 0.1
+
+# --- Mode Selector ---
+# Options are internal state values referenced in conditions — do not rename.
+input_select:
+  x1c_enclosure_mode:
+    name: 'X1C Enclosure Mode'
+    options:
+      - aus
+      - vorheizen
+      - druck
+      - nachlauf
+      - fehler
+    initial: aus
+    icon: mdi:radiator
+
+# --- Configuration Parameters ---
+input_number:
+  x1c_enclosure_overtemp_limit:
+    name: 'X1C Enclosure: Overtemp Limit'
+    min: 60.0
+    max: 90.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: '°C'
+    icon: mdi:thermometer-alert
+
+  x1c_enclosure_cooldown_minutes:
+    name: 'X1C Enclosure: Cooldown (min)'
+    min: 0.0
+    max: 180.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: min
+
+  x1c_enclosure_comm_loss_minutes:
+    name: 'X1C Enclosure: Printer Offline → OFF after (min)'
+    min: 1.0
+    max: 60.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: min
+
+  x1c_enclosure_safety_hardcap_hours:
+    name: 'X1C Enclosure: Max Heating Duration (h)'
+    min: 1.0
+    max: 24.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: h
+
+  x1c_enclosure_safety_buffer_minutes:
+    name: 'X1C Enclosure: Safety Buffer (min)'
+    min: 0.0
+    max: 60.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: min
+
+  x1c_enclosure_power_min_w:
+    name: 'X1C Enclosure: Power Watchdog (W)'
+    min: 0.0
+    max: 200.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: W
+
+  x1c_enclosure_preheat_timeout_minutes:
+    name: 'X1C Enclosure: Preheat Auto-OFF (min)'
+    min: 5.0
+    max: 180.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: min
+
+  x1c_enclosure_preheat_target:
+    name: 'X1C Enclosure: Preheat Target Temp (°C)'
+    min: 30.0
+    max: 60.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: '°C'
+    icon: mdi:thermometer-check
+
+  x1c_enclosure_preheat_bed_threshold:
+    name: 'X1C Enclosure: Bed Temp Threshold for Auto-Preheat'
+    min: 60.0
+    max: 120.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '°C'
+
+  x1c_enclosure_preheat_max_wait:
+    name: 'X1C Enclosure: Max Wait During Preheat Pause (min)'
+    min: 5.0
+    max: 60.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: min
+
+# --- Session Tracking ---
+input_datetime:
+  x1c_enclosure_session_started:
+    name: 'X1C Enclosure: Session Start'
+    has_date: true
+    has_time: true
+
+# --- Timers ---
+timer:
+  x1c_enclosure_safety:
+    name: 'X1C Enclosure: Safety'
+
+  x1c_enclosure_post_print:
+    name: 'X1C Enclosure: Cooldown'
+
+# --- Template Sensors ---
+template:
+  - sensor:
+    - name: "X1C Enclosure Status"
+      unique_id: x1c_enclosure_status_v2
+      icon: mdi:radiator
+      state: >
+        {% set mode = states('input_select.x1c_enclosure_mode') %}
+        {% set temp = states('sensor.x1c_heater_temperatur') | float(0) %}
+        {% set chamber = states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') | float(0) %}
+        {% if mode == 'fehler' %}ERROR — Reset required
+        {% elif mode == 'aus' %}Off
+        {% elif mode == 'vorheizen' %}Preheating ({{ temp | round(1) }}°C / {{ chamber | round(0) }}°C)
+        {% elif mode == 'druck' %}Printing ({{ temp | round(1) }}°C / {{ chamber | round(0) }}°C)
+        {% elif mode == 'nachlauf' %}Cooldown ({{ temp | round(1) }}°C)
+        {% else %}{{ mode }} ({{ temp | round(1) }}°C)
+        {% endif %}
+
+    - name: "X1C Enclosure Auto-OFF"
+      unique_id: x1c_enclosure_auto_off_v2
+      icon: mdi:timer-outline
+      state: >
+        {% if is_state('timer.x1c_enclosure_safety', 'active') %}
+          {% set fin = state_attr('timer.x1c_enclosure_safety', 'finishes_at') %}
+          {% if fin %}{{ as_timestamp(fin) | timestamp_custom('%H:%M', true) }}
+          {% else %}Active{% endif %}
+        {% else %}—{% endif %}
+
+    - name: "X1C Print Remaining (min)"
+      unique_id: x1c_print_remaining_minutes
+      icon: mdi:timer-sand
+      unit_of_measurement: min
+      state: >
+        {% set v = states('sensor.x1c_00m00a2c0601660_verbleibende_zeit') %}
+        {% if v in ['unknown','unavailable','none',''] %}0
+        {% else %}{{ (v | float(0) * 60) | round(0) }}
+        {% endif %}
+
+  - binary_sensor:
+    - name: "X1C Print Active"
+      unique_id: x1c_print_active
+      icon: mdi:printer-3d
+      state: >
+        {% set status = states('sensor.x1c_00m00a2c0601660_druckstatus') | lower %}
+        {% set step = states('sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt') | lower %}
+        {{ status == 'running' and step == 'printing' }}
+
+# --- Shell Command for Git Sync ---
+shell_command:
+  x1c_git_pull: >
+    cd /config/bambu-heater && git pull --ff-only 2>&1 || echo "GIT PULL FAILED"
+
+# --- Scripts ---
+script:
+  x1c_enclosure_turn_off:
+    alias: 'X1C Enclosure: OFF'
+    description: Normal shutdown — switch off + thermostat off (belt and suspenders)
+    mode: queued
+    sequence:
+    - action: switch.turn_off
+      target:
+        entity_id: switch.x1c_heater
+    - action: climate.set_hvac_mode
+      target:
+        entity_id: climate.x1c_gehause_thermostat
+      data:
+        hvac_mode: 'off'
+    - action: script.turn_off
+      target:
+        entity_id: script.x1c_enclosure_cooldown
+    - action: fan.turn_off
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.x1c_enclosure_mode
+      data:
+        option: aus
+
+  x1c_enclosure_emergency_off:
+    alias: 'X1C Enclosure: EMERGENCY OFF'
+    description: Safety event — manual reset required
+    mode: queued
+    sequence:
+    - action: switch.turn_off
+      target:
+        entity_id: switch.x1c_heater
+    - action: climate.set_hvac_mode
+      target:
+        entity_id: climate.x1c_gehause_thermostat
+      data:
+        hvac_mode: 'off'
+    - action: timer.cancel
+      target:
+        entity_id:
+        - timer.x1c_enclosure_safety
+        - timer.x1c_enclosure_post_print
+    - action: script.turn_off
+      target:
+        entity_id: script.x1c_enclosure_cooldown
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+      data:
+        percentage: 100
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.x1c_enclosure_mode
+      data:
+        option: fehler
+
+  x1c_enclosure_set_safety_timer:
+    alias: 'X1C Enclosure: Set Safety Timer'
+    description: Sets safety timer capped by hardcap
+    mode: queued
+    fields:
+      desired_sec:
+        description: Desired duration in seconds
+      min_sec:
+        description: Minimum duration in seconds
+    sequence:
+    - variables:
+        desired: '{{ desired_sec | int(0) }}'
+        min_s: '{{ min_sec | int(0) }}'
+        hardcap_sec: >
+          {{ (states('input_number.x1c_enclosure_safety_hardcap_hours') | float(12) * 3600) | int }}
+        start_str: "{{ states('input_datetime.x1c_enclosure_session_started') }}"
+        start_ts: >
+          {% if start_str in ['unknown','unavailable','none',''] %}
+            {{ as_timestamp(now()) }}
+          {% else %}
+            {{ as_timestamp(start_str) }}
+          {% endif %}
+        elapsed: '{{ (as_timestamp(now()) - start_ts) | int }}'
+        remaining_cap: '{{ (hardcap_sec - elapsed) | int }}'
+        sec: >
+          {% if remaining_cap <= 0 %}0
+          {% else %}{{ [desired, remaining_cap] | min }}
+          {% endif %}
+    - choose:
+      - conditions: '{{ sec | int <= 0 }}'
+        sequence:
+        - action: script.x1c_enclosure_turn_off
+      default:
+      - action: timer.start
+        target:
+          entity_id: timer.x1c_enclosure_safety
+        data:
+          duration: >
+            {% set s = sec | int %}
+            {% if s < min_s %}{% set s = min_s %}{% endif %}
+            {% set h = s // 3600 %}
+            {% set m = (s % 3600) // 60 %}
+            {% set ss = s % 60 %}
+            {{ '%02d:%02d:%02d' | format(h, m, ss) }}
+
+  x1c_enclosure_reset_error:
+    alias: 'X1C Enclosure: Reset Error'
+    description: Manual reset after safety event
+    mode: single
+    sequence:
+    - condition: state
+      entity_id: input_select.x1c_enclosure_mode
+      state: fehler
+    - action: fan.turn_off
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.x1c_enclosure_mode
+      data:
+        option: aus
+    - action: persistent_notification.create
+      data:
+        title: X1C Enclosure
+        message: >
+          Error state cleared ({{ now().strftime('%H:%M') }}).
+          Heater can be activated again.
+        notification_id: x1c_enclosure_error_reset
+
+  x1c_enclosure_cooldown:
+    alias: 'X1C Enclosure: Controlled Cooldown'
+    description: 30 min cooldown — heater ramps down, fan ramps up incrementally
+    mode: restart
+    sequence:
+    # Phase 1: Heater stays on, fan low (0-10 min)
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+      data:
+        percentage: 30
+    - delay: '00:10:00'
+    # Phase 2: Heater off — lower target to 20°C so thermostat doesn't re-enable
+    - action: climate.set_temperature
+      target:
+        entity_id: climate.x1c_gehause_thermostat
+      data:
+        temperature: 20
+    - delay: '00:05:00'
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+      data:
+        percentage: 50
+    - delay: '00:05:00'
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+      data:
+        percentage: 70
+    - delay: '00:05:00'
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+      data:
+        percentage: 100
+    - delay: '00:05:00'
+    - action: script.x1c_enclosure_turn_off
+
+  x1c_sync_from_git:
+    alias: 'X1C Config: Git Pull + Reload'
+    description: Pulls latest config from git and reloads HA config
+    mode: single
+    sequence:
+    - action: shell_command.x1c_git_pull
+    - delay: '00:00:02'
+    - action: homeassistant.reload_all
+
+# --- Automations ---
+automation:
+  # === SAFETY ===
+  - id: x1c_safety_overtemp
+    alias: 'X1C Safety: Overtemp Shelly → EMERGENCY OFF'
+    description: >
+      Primary overtemp — fires ALWAYS, no conditions.
+    mode: single
+    trigger:
+    - platform: numeric_state
+      entity_id: sensor.x1c_heater_temperatur
+      above: input_number.x1c_enclosure_overtemp_limit
+    action:
+    - action: script.x1c_enclosure_emergency_off
+    - action: persistent_notification.create
+      data:
+        title: 'X1C: OVERTEMP (Heater Sensor)'
+        message: >
+          Heater sensor {{ states('sensor.x1c_heater_temperatur') }}°C exceeds
+          limit ({{ states('input_number.x1c_enclosure_overtemp_limit') }}°C).
+          Manual reset required. ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+        notification_id: x1c_enclosure_safety
+
+  - id: x1c_safety_overtemp_printer
+    alias: 'X1C Safety: Overtemp Printer Sensor → EMERGENCY OFF'
+    description: >
+      Secondary overtemp on the printer's built-in chamber sensor.
+      Independent hardware — catches Shelly sensor failure.
+      Printer sensor reads ~5°C lower, hence 65°C limit.
+    mode: single
+    trigger:
+    - platform: numeric_state
+      entity_id: sensor.x1c_00m00a2c0601660_temperatur_im_druckraum
+      above: 65
+    action:
+    - action: script.x1c_enclosure_emergency_off
+    - action: persistent_notification.create
+      data:
+        title: 'X1C: OVERTEMP (Printer Sensor)'
+        message: >
+          Printer sensor {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') }}°C
+          exceeds 65°C. Heater sensor shows
+          {{ states('sensor.x1c_heater_temperatur') }}°C.
+          Manual reset required. ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+        notification_id: x1c_enclosure_safety
+
+  - id: x1c_safety_sensor_divergence
+    alias: 'X1C Safety: Sensor Divergence → EMERGENCY OFF'
+    description: >
+      Cross-check: If Shelly and printer sensor diverge by >15°C
+      for 5 min, a sensor is likely defective → safety shutdown.
+    mode: single
+    trigger:
+    - platform: template
+      value_template: >
+        {% set shelly = states('sensor.x1c_heater_temperatur') | float(-999) %}
+        {% set printer = states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') | float(-999) %}
+        {% if shelly > -900 and printer > -900 %}
+          {{ (shelly - printer) | abs > 15 }}
+        {% else %}false{% endif %}
+      for: '00:05:00'
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    action:
+    - action: script.x1c_enclosure_emergency_off
+    - action: persistent_notification.create
+      data:
+        title: 'X1C: Sensor Divergence!'
+        message: >
+          Heater sensor: {{ states('sensor.x1c_heater_temperatur') }}°C,
+          Printer sensor: {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') }}°C.
+          Divergence >15°C for 5 min — a sensor is likely defective.
+          Manual reset required. ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+        notification_id: x1c_enclosure_safety
+
+  - id: x1c_safety_sensor_invalid
+    alias: 'X1C Safety: Sensor Invalid → EMERGENCY OFF'
+    mode: single
+    trigger:
+    - platform: state
+      entity_id: sensor.x1c_heater_temperatur
+      to: unavailable
+      for: '00:01:00'
+    - platform: state
+      entity_id: sensor.x1c_heater_temperatur
+      to: unknown
+      for: '00:01:00'
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    action:
+    - action: script.x1c_enclosure_emergency_off
+    - action: persistent_notification.create
+      data:
+        title: 'X1C: Sensor Failure'
+        message: >
+          Temperature sensor unavailable for 1 min. Manual reset required.
+          ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+        notification_id: x1c_enclosure_safety
+
+  - id: x1c_safety_power_watchdog
+    alias: 'X1C Safety: No Power → EMERGENCY OFF'
+    mode: single
+    trigger:
+    - platform: numeric_state
+      entity_id: sensor.x1c_heater_leistung
+      below: input_number.x1c_enclosure_power_min_w
+      for: '00:02:00'
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    - condition: state
+      entity_id: switch.x1c_heater
+      state: 'on'
+    action:
+    - action: script.x1c_enclosure_emergency_off
+    - action: persistent_notification.create
+      data:
+        title: 'X1C: Power Failure'
+        message: >
+          Heater on but < {{ states('input_number.x1c_enclosure_power_min_w') }}W
+          for 2 min. Manual reset required.
+          ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+        notification_id: x1c_enclosure_safety
+
+  - id: x1c_safety_comm_loss
+    alias: 'X1C Safety: Printer Offline → OFF'
+    mode: restart
+    trigger:
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_druckstatus
+      to: unavailable
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_druckstatus
+      to: unknown
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_druckstatus
+      to: offline
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    action:
+    - delay: >
+        {% set m = states('input_number.x1c_enclosure_comm_loss_minutes') | int(5) %}
+        {{ '%02d:%02d:00' | format(m // 60, m % 60) }}
+    - condition: template
+      value_template: >
+        {% set s = states('sensor.x1c_00m00a2c0601660_druckstatus') | lower %}
+        {{ s in ['unavailable','unknown','offline'] }}
+    - action: script.x1c_enclosure_turn_off
+    - action: persistent_notification.create
+      data:
+        title: 'X1C: Printer Offline'
+        message: >
+          Printer offline for {{ states('input_number.x1c_enclosure_comm_loss_minutes') | int }} min.
+          Heater turned off. ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+        notification_id: x1c_enclosure_comm_loss
+
+  - id: x1c_safety_timer_expired
+    alias: 'X1C Safety: Timer Expired → OFF'
+    mode: single
+    trigger:
+    - platform: event
+      event_type: timer.finished
+      event_data:
+        entity_id: timer.x1c_enclosure_safety
+    action:
+    - action: script.x1c_enclosure_turn_off
+
+  - id: x1c_safety_startup
+    alias: 'X1C Safety: HA Restart → OFF + Pause Check'
+    description: >
+      After HA restart: always turn off heater. If printer is paused
+      (e.g. preheat pause before crash), warn the user.
+    mode: single
+    trigger:
+    - platform: homeassistant
+      event: start
+    action:
+    - delay: '00:00:10'
+    - choose:
+      - conditions:
+        - condition: or
+          conditions:
+          - condition: state
+            entity_id: switch.x1c_heater
+            state: 'on'
+          - condition: state
+            entity_id: climate.x1c_gehause_thermostat
+            state: heat
+        sequence:
+        - action: script.x1c_enclosure_turn_off
+        - action: persistent_notification.create
+          data:
+            title: 'X1C: HA Restart'
+            message: >
+              HA restarted. Heater turned off as a safety precaution.
+              ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+            notification_id: x1c_enclosure_restart
+    - choose:
+      - conditions:
+        - condition: state
+          entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
+          state: paused_user
+        sequence:
+        - action: persistent_notification.create
+          data:
+            title: 'X1C: Printer is PAUSED!'
+            message: >
+              HA was restarted. The printer is currently PAUSED
+              (likely a preheat pause before the crash).
+              Please check manually and resume if needed.
+              ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+            notification_id: x1c_enclosure_paused_warning
+
+  # === THERMOSTAT ===
+  - id: x1c_enclosure_heat_on
+    alias: 'X1C Enclosure: HEAT → Start Session'
+    mode: single
+    trigger:
+    - platform: state
+      entity_id: climate.x1c_gehause_thermostat
+      to: heat
+    condition:
+    - condition: not
+      conditions:
+      - condition: state
+        entity_id: input_select.x1c_enclosure_mode
+        state: fehler
+    - condition: template
+      value_template: >
+        {{ states('sensor.x1c_heater_temperatur') not in ['unknown','unavailable','none',''] }}
+    action:
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.x1c_enclosure_session_started
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    - action: timer.cancel
+      target:
+        entity_id:
+        - timer.x1c_enclosure_post_print
+        - timer.x1c_enclosure_safety
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+      data:
+        percentage: 100
+    - variables:
+        druck_laeuft: "{{ is_state('binary_sensor.x1c_druck_aktiv', 'on') }}"
+        remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
+        cooldown_min: "{{ states('input_number.x1c_enclosure_cooldown_minutes') | int(20) }}"
+        buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
+        preheat_min: "{{ states('input_number.x1c_enclosure_preheat_timeout_minutes') | int(60) }}"
+    - choose:
+      - conditions: '{{ druck_laeuft }}'
+        sequence:
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.x1c_enclosure_mode
+          data:
+            option: druck
+        - action: script.x1c_enclosure_set_safety_timer
+          data:
+            desired_sec: >
+              {% if remaining_min >= 0 %}
+                {{ (remaining_min + cooldown_min + buffer_min) * 60 }}
+              {% else %}7200{% endif %}
+            min_sec: 300
+      default:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.x1c_enclosure_mode
+        data:
+          option: vorheizen
+      - action: script.x1c_enclosure_set_safety_timer
+        data:
+          desired_sec: '{{ (preheat_min | int(60)) * 60 }}'
+          min_sec: 0
+
+  - id: x1c_enclosure_heat_off
+    alias: 'X1C Enclosure: OFF → Cleanup'
+    mode: single
+    trigger:
+    - platform: state
+      entity_id: climate.x1c_gehause_thermostat
+      to: 'off'
+    action:
+    - action: timer.cancel
+      target:
+        entity_id:
+        - timer.x1c_enclosure_post_print
+        - timer.x1c_enclosure_safety
+    - action: switch.turn_off
+      target:
+        entity_id: switch.x1c_heater
+    - action: script.turn_off
+      target:
+        entity_id: script.x1c_enclosure_cooldown
+    - action: fan.turn_off
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.x1c_enclosure_mode
+      data:
+        option: aus
+
+  # === PRINT ===
+  - id: x1c_enclosure_print_started
+    alias: 'X1C Enclosure: Print Started → Adjust Safety'
+    mode: restart
+    trigger:
+    - platform: state
+      entity_id: binary_sensor.x1c_druck_aktiv
+      from: 'off'
+      to: 'on'
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    action:
+    - action: timer.cancel
+      target:
+        entity_id: timer.x1c_enclosure_post_print
+    - action: script.turn_off
+      target:
+        entity_id: script.x1c_enclosure_cooldown
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.x1c_enclosure_mode
+      data:
+        option: druck
+    - delay: '00:00:10'
+    - variables:
+        remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
+        cooldown_min: "{{ states('input_number.x1c_enclosure_cooldown_minutes') | int(20) }}"
+        buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
+        start_str: "{{ states('input_datetime.x1c_enclosure_session_started') }}"
+        start_ts: >
+          {% if start_str in ['unknown','unavailable','none',''] %}
+            {{ as_timestamp(now()) }}
+          {% else %}{{ as_timestamp(start_str) }}{% endif %}
+        hardcap_sec: >
+          {{ (states('input_number.x1c_enclosure_safety_hardcap_hours') | float(12) * 3600) | int }}
+        elapsed: '{{ (as_timestamp(now()) - start_ts) | int }}'
+        remaining_cap: '{{ (hardcap_sec - elapsed) | int }}'
+        desired_sec: >
+          {% if remaining_min >= 0 %}
+            {{ (remaining_min + cooldown_min + buffer_min) * 60 }}
+          {% else %}{{ remaining_cap }}{% endif %}
+    - action: script.x1c_enclosure_set_safety_timer
+      data:
+        desired_sec: '{{ desired_sec }}'
+        min_sec: 300
+
+  - id: x1c_enclosure_print_ended
+    alias: 'X1C Enclosure: Print Ended → Cooldown'
+    mode: restart
+    trigger:
+    - platform: state
+      entity_id: binary_sensor.x1c_druck_aktiv
+      from: 'on'
+      to: 'off'
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    action:
+    - variables:
+        st: "{{ states('sensor.x1c_00m00a2c0601660_druckstatus') | lower }}"
+    - choose:
+      - conditions: "{{ st in ['failed','fehlgeschlagen','offline'] }}"
+        sequence:
+        - action: script.x1c_enclosure_turn_off
+      default:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.x1c_enclosure_mode
+        data:
+          option: nachlauf
+      - action: timer.start
+        target:
+          entity_id: timer.x1c_enclosure_post_print
+        data:
+          duration: '00:35:00'
+      - action: script.x1c_enclosure_cooldown
+
+  - id: x1c_enclosure_cooldown_backup
+    alias: 'X1C Enclosure: Cooldown Backup → OFF'
+    mode: single
+    trigger:
+    - platform: event
+      event_type: timer.finished
+      event_data:
+        entity_id: timer.x1c_enclosure_post_print
+    action:
+    - action: script.x1c_enclosure_turn_off
+
+  # === PERIODIC ===
+  - id: x1c_enclosure_update_safety
+    alias: 'X1C Enclosure: Update Safety Timer Periodically'
+    mode: single
+    trigger:
+    - platform: time_pattern
+      minutes: /5
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    action:
+    - variables:
+        print_active: "{{ is_state('binary_sensor.x1c_druck_aktiv', 'on') }}"
+        post_print_active: "{{ is_state('timer.x1c_enclosure_post_print', 'active') }}"
+        remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
+        cooldown_min: "{{ states('input_number.x1c_enclosure_cooldown_minutes') | int(20) }}"
+        buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
+        preheat_min: "{{ states('input_number.x1c_enclosure_preheat_timeout_minutes') | int(60) }}"
+        start_str: "{{ states('input_datetime.x1c_enclosure_session_started') }}"
+        start_ts: >
+          {% if start_str in ['unknown','unavailable','none',''] %}
+            {{ as_timestamp(now()) }}
+          {% else %}{{ as_timestamp(start_str) }}{% endif %}
+        hardcap_sec: >
+          {{ (states('input_number.x1c_enclosure_safety_hardcap_hours') | float(12) * 3600) | int }}
+        elapsed: '{{ (as_timestamp(now()) - start_ts) | int }}'
+        remaining_cap: '{{ (hardcap_sec - elapsed) | int }}'
+    - choose:
+      - conditions: '{{ print_active }}'
+        sequence:
+        - action: script.x1c_enclosure_set_safety_timer
+          data:
+            desired_sec: >
+              {% if remaining_min >= 0 %}
+                {{ (remaining_min + cooldown_min + buffer_min) * 60 }}
+              {% else %}{{ remaining_cap }}{% endif %}
+            min_sec: 300
+      - conditions: '{{ not print_active and not post_print_active }}'
+        sequence:
+        - action: script.x1c_enclosure_set_safety_timer
+          data:
+            desired_sec: '{{ (preheat_min * 60 - elapsed) | int }}'
+            min_sec: 0
+
+  # === PROTECTION ===
+  - id: x1c_enclosure_block_manual
+    alias: 'X1C: Heater Only Via Thermostat'
+    mode: single
+    trigger:
+    - platform: state
+      entity_id: switch.x1c_heater
+      to: 'on'
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: 'off'
+    action:
+    - action: switch.turn_off
+      target:
+        entity_id: switch.x1c_heater
+
+  # === AUTO-PREHEAT + PAUSE/RESUME ===
+  - id: x1c_enclosure_auto_preheat
+    alias: 'X1C: Auto-Preheat for High-Temp Materials'
+    description: >
+      Detects ABS/ASA/PC via bed target temperature (>=85°C) and turns on
+      PTC heater + fan automatically. Fallback: OrcaSlicer heating_chamber.
+      3s delay to ensure bed target temp from the same MQTT packet has arrived.
+    mode: single
+    trigger:
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
+      to: heatbed_preheating
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
+      to: heating_chamber
+    condition:
+    - condition: not
+      conditions:
+      - condition: state
+        entity_id: input_select.x1c_enclosure_mode
+        state: fehler
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: 'off'
+    action:
+    # Wait for bed target temp from the same MQTT packet to arrive
+    - delay: '00:00:03'
+    - condition: template
+      value_template: >
+        {% set step = states('sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt') %}
+        {% set bed = states('sensor.x1c_00m00a2c0601660_zieltemperatur_vom_druckbett') | float(0) %}
+        {% set threshold = states('input_number.x1c_enclosure_preheat_bed_threshold') | float(85) %}
+        {{ step == 'heating_chamber' or bed >= threshold }}
+    - action: climate.set_hvac_mode
+      target:
+        entity_id: climate.x1c_gehause_thermostat
+      data:
+        hvac_mode: heat
+
+  - id: x1c_enclosure_preheat_pause
+    alias: 'X1C: Print Starting → Pause if Chamber Cold'
+    description: >
+      When the printer starts the first layer and the chamber is still below
+      target temperature, pause the print until temp is reached.
+      Checks thermostat+temp instead of mode to avoid race condition with print_started.
+    mode: single
+    trigger:
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
+      to: printing
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    - condition: template
+      value_template: >
+        {{ states('sensor.x1c_heater_temperatur') | float(0)
+           < states('input_number.x1c_enclosure_preheat_target') | float(45) }}
+    action:
+    - action: button.press
+      target:
+        entity_id: button.x1c_00m00a2c0601660_druckvorgang_anhalten
+    # Extend safety timer so it doesn't expire during pause
+    - action: script.x1c_enclosure_set_safety_timer
+      data:
+        desired_sec: >
+          {{ (states('input_number.x1c_enclosure_preheat_max_wait') | int(30) +
+              states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10)) * 60 }}
+        min_sec: 1800
+    - action: persistent_notification.create
+      data:
+        title: 'X1C Enclosure: Preheating'
+        message: >
+          Print paused — chamber heating to
+          {{ states('input_number.x1c_enclosure_preheat_target') | int }}°C.
+          Currently: {{ states('sensor.x1c_heater_temperatur') | round(1) }}°C.
+          Auto-resume at target temp or after
+          {{ states('input_number.x1c_enclosure_preheat_max_wait') | int }} min.
+        notification_id: x1c_preheat_pause
+
+  - id: x1c_enclosure_preheat_resume
+    alias: 'X1C: Chamber Warm → Resume Print'
+    description: Chamber reached target temperature → resume print
+    mode: single
+    trigger:
+    - platform: numeric_state
+      entity_id: sensor.x1c_heater_temperatur
+      above: input_number.x1c_enclosure_preheat_target
+    condition:
+    - condition: state
+      entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
+      state: paused_user
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    action:
+    - action: button.press
+      target:
+        entity_id: button.x1c_00m00a2c0601660_druckvorgang_fortsetzen
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.x1c_enclosure_mode
+      data:
+        option: druck
+    # Recalculate safety timer for print duration
+    - delay: '00:00:10'
+    - variables:
+        remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
+        cooldown_min: "{{ states('input_number.x1c_enclosure_cooldown_minutes') | int(20) }}"
+        buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
+    - action: script.x1c_enclosure_set_safety_timer
+      data:
+        desired_sec: >
+          {% if remaining_min >= 0 %}
+            {{ (remaining_min + cooldown_min + buffer_min) * 60 }}
+          {% else %}7200{% endif %}
+        min_sec: 300
+    - action: persistent_notification.create
+      data:
+        title: X1C Enclosure
+        message: >
+          Chamber reached {{ states('sensor.x1c_heater_temperatur') | round(1) }}°C.
+          Print resuming.
+        notification_id: x1c_preheat_pause
+
+  - id: x1c_enclosure_preheat_timeout
+    alias: 'X1C: Preheat Timeout → Resume with Warning'
+    description: >
+      Max wait time exceeded → resume print anyway.
+      NOTE: 30 min hardcoded — HA does not support templates in for: on state triggers.
+    mode: single
+    trigger:
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
+      to: paused_user
+      for:
+        minutes: 30
+    condition:
+    - condition: state
+      entity_id: climate.x1c_gehause_thermostat
+      state: heat
+    action:
+    - action: button.press
+      target:
+        entity_id: button.x1c_00m00a2c0601660_druckvorgang_fortsetzen
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.x1c_enclosure_mode
+      data:
+        option: druck
+    - action: persistent_notification.create
+      data:
+        title: 'X1C Enclosure: Preheat Timeout'
+        message: >
+          Target temp {{ states('input_number.x1c_enclosure_preheat_target') | int }}°C
+          not reached after 30 min.
+          Currently: {{ states('sensor.x1c_heater_temperatur') | round(1) }}°C.
+          Resuming print anyway.
+        notification_id: x1c_preheat_pause
+
+  # === AUTO-SYNC ===
+  - id: x1c_auto_sync_on_push
+    alias: 'X1C: GitHub Push → Git Pull + Reload'
+    description: >
+      Triggered by GitHub webhook on push. Pulls latest config and reloads HA.
+      Set up webhook in GitHub: Settings → Webhooks → https://<your-ha>/api/webhook/<webhook_id>
+    mode: single
+    trigger:
+    - platform: webhook
+      webhook_id: x1c-git-sync-06f81528bbb0314024bdda0a2a430f34
+    action:
+    - action: script.x1c_sync_from_git
+    - action: persistent_notification.create
+      data:
+        title: 'X1C Config: Synced'
+        message: >
+          Git pull + reload triggered by webhook.
+          ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
+        notification_id: x1c_git_sync

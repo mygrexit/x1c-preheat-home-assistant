@@ -1,0 +1,83 @@
+# X1C Enclosure Heater — Lovelace Dashboard (dashboard-bambulab)
+
+views:
+  - title: Home
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: X1C Enclosure
+            heading_style: title
+          - type: tile
+            entity: climate.x1c_gehause_thermostat
+            name: Heater
+          - type: tile
+            entity: sensor.x1c_gehause_status
+            name: Status
+          - type: tile
+            entity: sensor.x1c_gehause_auto_aus
+            name: Auto-OFF at
+          - type: tile
+            entity: script.x1c_enclosure_reset_error
+            name: Reset Error
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Temperatures
+            heading_style: title
+          - type: tile
+            entity: sensor.x1c_heater_temperatur
+            name: Heater Sensor
+          - type: tile
+            entity: sensor.x1c_00m00a2c0601660_temperatur_im_druckraum
+            name: Printer Sensor
+          - type: tile
+            entity: sensor.x1c_heater_leistung
+            name: Power
+          - type: tile
+            entity: fan.x1c_00m00a2c0601660_druckraumlufter
+            name: Aux Fan
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Print
+            heading_style: title
+          - type: tile
+            entity: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
+            name: Stage
+          - type: tile
+            entity: sensor.x1c_druck_restzeit_min
+            name: Remaining
+          - type: picture-entity
+            entity: camera.x1c_00m00a2c0601660_kamera
+            name: Camera
+            camera_view: auto
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Settings
+            heading_style: title
+          - type: tile
+            entity: input_number.x1c_enclosure_overtemp_limit
+            name: Overtemp Limit
+          - type: tile
+            entity: input_number.x1c_enclosure_preheat_target
+            name: Preheat Target
+          - type: tile
+            entity: input_number.x1c_enclosure_preheat_bed_threshold
+            name: Bed Threshold (Auto-Preheat)
+          - type: tile
+            entity: input_number.x1c_enclosure_preheat_timeout_minutes
+            name: Manual Preheat → OFF
+          - type: tile
+            entity: input_number.x1c_enclosure_cooldown_minutes
+            name: Cooldown
+          - type: tile
+            entity: input_number.x1c_enclosure_safety_hardcap_hours
+            name: Max Heat Duration
+          - type: tile
+            entity: input_number.x1c_enclosure_comm_loss_minutes
+            name: Offline → OFF after
