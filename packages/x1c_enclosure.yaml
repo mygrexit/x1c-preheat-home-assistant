@@ -195,15 +195,15 @@ template:
 # --- Shell Command for Git Sync ---
 shell_command:
   # HA Core container has no git binary, so we fetch raw files from GitHub
-  # directly. The live file paths are symlinks into /config/bambu-heater, so
-  # overwriting the symlink target updates HA on the next reload.
-  x1c_git_pull: >
-    curl -sfL -o /config/bambu-heater/packages/x1c_enclosure.yaml.new
+  # directly. The shell_command integration splits on whitespace and does NOT
+  # invoke a shell, so && would be passed as a curl argument — wrap in sh -c.
+  x1c_git_pull: >-
+    /bin/sh -c 'curl -sfL -o /config/bambu-heater/packages/x1c_enclosure.yaml.new
     https://raw.githubusercontent.com/mygrexit/x1c-preheat-home-assistant/main/packages/x1c_enclosure.yaml
     && mv /config/bambu-heater/packages/x1c_enclosure.yaml.new /config/bambu-heater/packages/x1c_enclosure.yaml
     && curl -sfL -o /config/bambu-heater/dashboard.yaml.new
     https://raw.githubusercontent.com/mygrexit/x1c-preheat-home-assistant/main/dashboard.yaml
-    && mv /config/bambu-heater/dashboard.yaml.new /config/bambu-heater/dashboard.yaml
+    && mv /config/bambu-heater/dashboard.yaml.new /config/bambu-heater/dashboard.yaml'
 
 # --- Scripts ---
 script:
