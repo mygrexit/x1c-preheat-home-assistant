@@ -894,6 +894,15 @@ automation:
     - action: button.press
       target:
         entity_id: button.x1c_00m00a2c0601660_druckvorgang_anhalten
+    # Aux fan to 100% for chamber circulation while we wait. The printer's
+    # G-code set this to ~30% (slicer ABS default) at print start; with the
+    # print paused, no further G-code runs until resume — so our override
+    # holds for the entire preheat-pause window.
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_bauteillufter
+      data:
+        percentage: 100
     # Extend safety timer so it doesn't expire during pause
     - action: script.x1c_enclosure_set_safety_timer
       data:
@@ -940,6 +949,13 @@ automation:
         {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') | float(0)
            >= states('input_number.x1c_enclosure_preheat_target') | float(45) }}
     action:
+    # Aux fan back to 0 before resume — the next G-code M106 will set it
+    # to whatever the slicer profile wants (typically ~30% for ABS).
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_bauteillufter
+      data:
+        percentage: 0
     - action: button.press
       target:
         entity_id: button.x1c_00m00a2c0601660_druckvorgang_fortsetzen
@@ -999,6 +1015,11 @@ automation:
       entity_id: input_boolean.x1c_in_preheat_pause
       state: 'on'
     action:
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_bauteillufter
+      data:
+        percentage: 0
     - action: button.press
       target:
         entity_id: button.x1c_00m00a2c0601660_druckvorgang_fortsetzen
