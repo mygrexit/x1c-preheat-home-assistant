@@ -43,13 +43,29 @@ input_select:
     initial: aus
     icon: mdi:radiator
 
+# --- Markers ---
+input_boolean:
+  x1c_in_preheat_pause:
+    name: 'X1C: In Preheat Pause'
+    icon: mdi:pause-octagon
+
 # --- Configuration Parameters ---
 input_number:
   x1c_enclosure_overtemp_limit:
-    name: 'X1C Enclosure: Overtemp Limit'
+    name: 'X1C Enclosure: Overtemp Limit (Shelly)'
     min: 60.0
     max: 90.0
     step: 1.0
+    mode: slider
+    unit_of_measurement: '°C'
+    icon: mdi:thermometer-alert
+
+  x1c_enclosure_overtemp_printer_limit:
+    name: 'X1C Enclosure: Overtemp Limit (Printer)'
+    min: 55.0
+    max: 80.0
+    step: 1.0
+    initial: 70.0
     mode: slider
     unit_of_measurement: '°C'
     icon: mdi:thermometer-alert
@@ -132,9 +148,14 @@ timer:
     name: 'X1C Enclosure: Safety'
 
 # --- Template Sensors ---
+# NOTE: name: values are German so the slugified entity_id matches what
+# already exists in HA's entity registry from earlier versions of this
+# package. Changing these to English would silently create new entities
+# (e.g. sensor.x1c_enclosure_status) on a fresh install, breaking every
+# code reference in this file. Keep them German.
 template:
   - sensor:
-    - name: "X1C Enclosure Status"
+    - name: "X1C Gehäuse Status"
       unique_id: x1c_enclosure_status_v2
       icon: mdi:radiator
       state: >
@@ -148,7 +169,7 @@ template:
         {% else %}{{ mode }} ({{ temp | round(1) }}°C)
         {% endif %}
 
-    - name: "X1C Enclosure Auto-OFF"
+    - name: "X1C Gehäuse Auto Aus"
       unique_id: x1c_enclosure_auto_off_v2
       icon: mdi:timer-outline
       state: >
@@ -158,7 +179,7 @@ template:
           {% else %}Active{% endif %}
         {% else %}—{% endif %}
 
-    - name: "X1C Print Remaining (min)"
+    - name: "X1C Druck Restzeit (min)"
       unique_id: x1c_print_remaining_minutes
       icon: mdi:timer-sand
       unit_of_measurement: min
@@ -172,7 +193,7 @@ template:
         {% endif %}
 
   - binary_sensor:
-    - name: "X1C Print Active"
+    - name: "X1C Druck Aktiv"
       unique_id: x1c_print_active
       icon: mdi:printer-3d
       # Any pause state counts as active so a (preheat-)pause, user pause,
@@ -351,12 +372,14 @@ automation:
     description: >
       Secondary overtemp on the printer's built-in chamber sensor.
       Independent hardware — catches Shelly sensor failure.
-      Printer sensor reads ~5°C lower, hence 65°C limit.
+      Printer sensor reads ~5°C lower than the Shelly heater sensor.
+      Threshold is configurable (default 70°C) so high-bed-temp prints
+      in summer don't false-trigger from passive chamber heating.
     mode: single
     trigger:
     - platform: numeric_state
       entity_id: sensor.x1c_00m00a2c0601660_temperatur_im_druckraum
-      above: 65
+      above: input_number.x1c_enclosure_overtemp_printer_limit
     action:
     - action: script.x1c_enclosure_emergency_off
     - action: persistent_notification.create
@@ -364,8 +387,8 @@ automation:
         title: 'X1C: OVERTEMP (Printer Sensor)'
         message: >
           Printer sensor {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') }}°C
-          exceeds 65°C. Heater sensor shows
-          {{ states('sensor.x1c_heater_temperatur') }}°C.
+          exceeds {{ states('input_number.x1c_enclosure_overtemp_printer_limit') | int }}°C.
+          Heater sensor shows {{ states('sensor.x1c_heater_temperatur') }}°C.
           Manual reset required. ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
         notification_id: x1c_enclosure_safety
 
@@ -508,6 +531,12 @@ automation:
       event: start
     action:
     - delay: '00:00:10'
+    # The session is gone after a restart — reset the preheat-pause marker
+    # unconditionally so a stale 'on' from before the crash can't trick
+    # preheat_timeout into auto-resuming a stranded user pause later.
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.x1c_in_preheat_pause
     - choose:
       - conditions:
         - condition: or
@@ -569,6 +598,10 @@ automation:
     - action: timer.cancel
       target:
         entity_id: timer.x1c_enclosure_safety
+    # Fresh session — clear any stale preheat-pause marker
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.x1c_in_preheat_pause
     # Chamber fan off at start — must be 0 so heat accumulates.
     - action: fan.set_percentage
       target:
@@ -626,6 +659,9 @@ automation:
     - action: switch.turn_off
       target:
         entity_id: switch.x1c_heater
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.x1c_in_preheat_pause
     - action: input_select.select_option
       target:
         entity_id: input_select.x1c_enclosure_mode
@@ -724,6 +760,8 @@ automation:
         remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
         buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
         preheat_min: "{{ states('input_number.x1c_enclosure_preheat_timeout_minutes') | int(60) }}"
+        max_wait_min: "{{ states('input_number.x1c_enclosure_preheat_max_wait') | int(30) }}"
+        in_pause: "{{ is_state('input_boolean.x1c_in_preheat_pause', 'on') }}"
         start_str: "{{ states('input_datetime.x1c_enclosure_session_started') }}"
         start_ts: >
           {% if start_str in ['unknown','unavailable','none',''] %}
@@ -738,9 +776,15 @@ automation:
         sequence:
         - action: script.x1c_enclosure_set_safety_timer
           data:
+            # remaining_min is 0/-1 during a pause (sensor returns 0 when
+            # status != running). In that case use the preheat-max-wait floor
+            # so the safety timer doesn't shrink to just (buffer_min) and
+            # expire mid-pause.
             desired_sec: >
-              {% if remaining_min >= 0 %}
+              {% if remaining_min >= 1 %}
                 {{ (remaining_min + buffer_min) * 60 }}
+              {% elif in_pause %}
+                {{ (max_wait_min + buffer_min) * 60 }}
               {% else %}{{ remaining_cap }}{% endif %}
             min_sec: 300
       - conditions: '{{ not print_active }}'
@@ -773,15 +817,20 @@ automation:
     description: >
       Detects ABS/ASA/PC via bed target temperature (>=85°C) and turns on
       PTC heater + fan automatically. Fallback: OrcaSlicer heating_chamber.
-      3s delay to ensure bed target temp from the same MQTT packet has arrived.
+      Waits for the step to be sustained for 5s before reading bed target
+      temp, otherwise we can race a stale value from the previous job.
     mode: single
     trigger:
     - platform: state
       entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
       to: heatbed_preheating
+      for:
+        seconds: 5
     - platform: state
       entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
       to: heating_chamber
+      for:
+        seconds: 5
     condition:
     - condition: not
       conditions:
@@ -791,15 +840,19 @@ automation:
     - condition: state
       entity_id: climate.x1c_gehause_thermostat
       state: 'off'
-    action:
-    # Wait for bed target temp from the same MQTT packet to arrive
-    - delay: '00:00:03'
+    # Re-check the step is still active (didn't already advance) AND that
+    # the bed target temp matches a high-temp material. The bed actual temp
+    # must also be climbing (>30°C) to confirm it's not a stale value from
+    # the previous job.
     - condition: template
       value_template: >
         {% set step = states('sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt') %}
-        {% set bed = states('sensor.x1c_00m00a2c0601660_zieltemperatur_vom_druckbett') | float(0) %}
+        {% set bed_target = states('sensor.x1c_00m00a2c0601660_zieltemperatur_vom_druckbett') | float(0) %}
+        {% set bed_actual = states('sensor.x1c_00m00a2c0601660_druckbetttemperatur') | float(0) %}
         {% set threshold = states('input_number.x1c_enclosure_preheat_bed_threshold') | float(85) %}
-        {{ step == 'heating_chamber' or bed >= threshold }}
+        {{ step == 'heating_chamber'
+           or (bed_target >= threshold and bed_actual >= 30) }}
+    action:
     - action: climate.set_hvac_mode
       target:
         entity_id: climate.x1c_gehause_thermostat
@@ -827,7 +880,17 @@ automation:
       value_template: >
         {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') | float(0)
            < states('input_number.x1c_enclosure_preheat_target') | float(45) }}
+    # Don't re-pause mid-print: if we're already in (or just left) a preheat
+    # pause, the user resumed manually or the chamber dropped briefly. Skip.
+    - condition: state
+      entity_id: input_boolean.x1c_in_preheat_pause
+      state: 'off'
     action:
+    # Mark the pause BEFORE pressing the button so preheat_resume/timeout
+    # know this is our pause and not a user pause.
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.x1c_in_preheat_pause
     - action: button.press
       target:
         entity_id: button.x1c_00m00a2c0601660_druckvorgang_anhalten
@@ -885,6 +948,11 @@ automation:
         entity_id: input_select.x1c_enclosure_mode
       data:
         option: druck
+    # Clear the preheat-pause marker so a later mid-print pause is treated
+    # as user-pause and not auto-resumed by preheat_timeout.
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.x1c_in_preheat_pause
     # Recalculate safety timer for print duration
     - delay: '00:00:10'
     - variables:
@@ -909,7 +977,11 @@ automation:
     alias: 'X1C: Preheat Timeout → Resume with Warning'
     description: >
       Max wait time exceeded → resume print anyway.
-      NOTE: 30 min hardcoded — HA does not support templates in for: on state triggers.
+      NOTE: 30 min hardcoded — HA does not support templates in for: on state
+      triggers. Keep input_number.x1c_enclosure_preheat_max_wait aligned with
+      this value if you change one.
+      The in_preheat_pause marker prevents this firing on a user-initiated
+      pause (filament change, manual inspection, ...).
     mode: single
     trigger:
     - platform: state
@@ -921,6 +993,11 @@ automation:
     - condition: state
       entity_id: climate.x1c_gehause_thermostat
       state: heat
+    # Only auto-resume our own preheat pauses. User pauses (filament change,
+    # inspection) must NOT be auto-resumed.
+    - condition: state
+      entity_id: input_boolean.x1c_in_preheat_pause
+      state: 'on'
     action:
     - action: button.press
       target:
@@ -930,6 +1007,9 @@ automation:
         entity_id: input_select.x1c_enclosure_mode
       data:
         option: druck
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.x1c_in_preheat_pause
     - action: persistent_notification.create
       data:
         title: 'X1C Enclosure: Preheat Timeout'
