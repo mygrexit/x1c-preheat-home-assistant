@@ -31,16 +31,22 @@ views:
             name: Heater Sensor
           - type: tile
             entity: sensor.x1c_00m00a2c0601660_temperatur_im_druckraum
-            name: Printer Sensor
+            name: Chamber
+          - type: tile
+            entity: sensor.x1c_00m00a2c0601660_druckbetttemperatur
+            name: Bed
+          - type: tile
+            entity: sensor.x1c_00m00a2c0601660_temperatur_der_duse
+            name: Nozzle
           - type: tile
             entity: sensor.x1c_heater_leistung
-            name: Power
-          - type: tile
-            entity: fan.x1c_00m00a2c0601660_druckraumlufter
-            name: Chamber Fan
+            name: Heater Power
           - type: tile
             entity: fan.x1c_00m00a2c0601660_bauteillufter
             name: Aux Fan
+          - type: tile
+            entity: fan.x1c_00m00a2c0601660_druckraumlufter
+            name: Chamber Fan
 
       - type: grid
         cards:
