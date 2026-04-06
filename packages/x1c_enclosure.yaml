@@ -924,6 +924,13 @@ automation:
     - platform: numeric_state
       entity_id: sensor.x1c_heater_temperatur
       above: input_number.x1c_enclosure_preheat_target
+    # Second entrypoint: printer just paused AND chamber is already warm enough
+    # (covers race: temp reached target before/during the pause trigger firing).
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
+      to: paused_user
+      for:
+        seconds: 5
     condition:
     - condition: state
       entity_id: sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt
@@ -931,6 +938,10 @@ automation:
     - condition: state
       entity_id: climate.x1c_gehause_thermostat
       state: heat
+    - condition: template
+      value_template: >
+        {{ states('sensor.x1c_heater_temperatur') | float(0)
+           >= states('input_number.x1c_enclosure_preheat_target') | float(45) }}
     action:
     - action: button.press
       target:
