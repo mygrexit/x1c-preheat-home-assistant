@@ -82,9 +82,6 @@ views:
             entity: input_number.x1c_enclosure_preheat_timeout_minutes
             name: Manual Preheat → OFF
           - type: tile
-            entity: input_number.x1c_enclosure_cooldown_minutes
-            name: Cooldown
-          - type: tile
             entity: input_number.x1c_enclosure_safety_hardcap_hours
             name: Max Heat Duration
           - type: tile

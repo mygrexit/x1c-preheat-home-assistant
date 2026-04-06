@@ -54,14 +54,6 @@ input_number:
     unit_of_measurement: '°C'
     icon: mdi:thermometer-alert
 
-  x1c_enclosure_cooldown_minutes:
-    name: 'X1C Enclosure: Cooldown (min)'
-    min: 0.0
-    max: 180.0
-    step: 5.0
-    mode: slider
-    unit_of_measurement: min
-
   x1c_enclosure_comm_loss_minutes:
     name: 'X1C Enclosure: Printer Offline → OFF after (min)'
     min: 1.0
@@ -139,9 +131,6 @@ timer:
   x1c_enclosure_safety:
     name: 'X1C Enclosure: Safety'
 
-  x1c_enclosure_post_print:
-    name: 'X1C Enclosure: Cooldown'
-
 # --- Template Sensors ---
 template:
   - sensor:
@@ -156,7 +145,6 @@ template:
         {% elif mode == 'aus' %}Off
         {% elif mode == 'vorheizen' %}Preheating ({{ temp | round(1) }}°C / {{ chamber | round(0) }}°C)
         {% elif mode == 'druck' %}Printing ({{ temp | round(1) }}°C / {{ chamber | round(0) }}°C)
-        {% elif mode == 'nachlauf' %}Cooldown ({{ temp | round(1) }}°C)
         {% else %}{{ mode }} ({{ temp | round(1) }}°C)
         {% endif %}
 
@@ -220,14 +208,6 @@ script:
         entity_id: climate.x1c_gehause_thermostat
       data:
         hvac_mode: 'off'
-    - action: script.turn_off
-      target:
-        entity_id: script.x1c_enclosure_cooldown
-    - action: fan.turn_off
-      target:
-        entity_id:
-        - fan.x1c_00m00a2c0601660_druckraumlufter
-        - fan.x1c_00m00a2c0601660_bauteillufter
     - action: input_select.select_option
       target:
         entity_id: input_select.x1c_enclosure_mode
@@ -249,17 +229,7 @@ script:
         hvac_mode: 'off'
     - action: timer.cancel
       target:
-        entity_id:
-        - timer.x1c_enclosure_safety
-        - timer.x1c_enclosure_post_print
-    - action: script.turn_off
-      target:
-        entity_id: script.x1c_enclosure_cooldown
-    - action: fan.set_percentage
-      target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
-      data:
-        percentage: 100
+        entity_id: timer.x1c_enclosure_safety
     - action: input_select.select_option
       target:
         entity_id: input_select.x1c_enclosure_mode
@@ -336,45 +306,6 @@ script:
           Error state cleared ({{ now().strftime('%H:%M') }}).
           Heater can be activated again.
         notification_id: x1c_enclosure_error_reset
-
-  x1c_enclosure_cooldown:
-    alias: 'X1C Enclosure: Controlled Cooldown'
-    description: 30 min cooldown — heater ramps down, fan ramps up incrementally
-    mode: restart
-    sequence:
-    # Phase 1: Heater stays on, fan low (0-10 min)
-    - action: fan.set_percentage
-      target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
-      data:
-        percentage: 30
-    - delay: '00:10:00'
-    # Phase 2: Heater off — lower target to 20°C so thermostat doesn't re-enable
-    - action: climate.set_temperature
-      target:
-        entity_id: climate.x1c_gehause_thermostat
-      data:
-        temperature: 20
-    - delay: '00:05:00'
-    - action: fan.set_percentage
-      target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
-      data:
-        percentage: 50
-    - delay: '00:05:00'
-    - action: fan.set_percentage
-      target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
-      data:
-        percentage: 70
-    - delay: '00:05:00'
-    - action: fan.set_percentage
-      target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
-      data:
-        percentage: 100
-    - delay: '00:05:00'
-    - action: script.x1c_enclosure_turn_off
 
   x1c_sync_from_git:
     alias: 'X1C Config: Git Pull + Reload'
@@ -630,10 +561,8 @@ automation:
         datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
     - action: timer.cancel
       target:
-        entity_id:
-        - timer.x1c_enclosure_post_print
-        - timer.x1c_enclosure_safety
-    # Chamber fan off at start — must be 0 so heat accumulates, only ramped during cooldown.
+        entity_id: timer.x1c_enclosure_safety
+    # Chamber fan off at start — must be 0 so heat accumulates.
     - action: fan.set_percentage
       target:
         entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
@@ -648,7 +577,6 @@ automation:
     - variables:
         druck_laeuft: "{{ is_state('binary_sensor.x1c_druck_aktiv', 'on') }}"
         remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
-        cooldown_min: "{{ states('input_number.x1c_enclosure_cooldown_minutes') | int(20) }}"
         buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
         preheat_min: "{{ states('input_number.x1c_enclosure_preheat_timeout_minutes') | int(60) }}"
     - choose:
@@ -663,7 +591,7 @@ automation:
           data:
             desired_sec: >
               {% if remaining_min >= 0 %}
-                {{ (remaining_min + cooldown_min + buffer_min) * 60 }}
+                {{ (remaining_min + buffer_min) * 60 }}
               {% else %}7200{% endif %}
             min_sec: 300
       default:
@@ -687,20 +615,10 @@ automation:
     action:
     - action: timer.cancel
       target:
-        entity_id:
-        - timer.x1c_enclosure_post_print
-        - timer.x1c_enclosure_safety
+        entity_id: timer.x1c_enclosure_safety
     - action: switch.turn_off
       target:
         entity_id: switch.x1c_heater
-    - action: script.turn_off
-      target:
-        entity_id: script.x1c_enclosure_cooldown
-    - action: fan.turn_off
-      target:
-        entity_id:
-        - fan.x1c_00m00a2c0601660_druckraumlufter
-        - fan.x1c_00m00a2c0601660_bauteillufter
     - action: input_select.select_option
       target:
         entity_id: input_select.x1c_enclosure_mode
@@ -721,12 +639,6 @@ automation:
       entity_id: climate.x1c_gehause_thermostat
       state: heat
     action:
-    - action: timer.cancel
-      target:
-        entity_id: timer.x1c_enclosure_post_print
-    - action: script.turn_off
-      target:
-        entity_id: script.x1c_enclosure_cooldown
     - action: input_select.select_option
       target:
         entity_id: input_select.x1c_enclosure_mode
@@ -735,7 +647,6 @@ automation:
     - delay: '00:00:10'
     - variables:
         remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
-        cooldown_min: "{{ states('input_number.x1c_enclosure_cooldown_minutes') | int(20) }}"
         buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
         start_str: "{{ states('input_datetime.x1c_enclosure_session_started') }}"
         start_ts: >
@@ -748,7 +659,7 @@ automation:
         remaining_cap: '{{ (hardcap_sec - elapsed) | int }}'
         desired_sec: >
           {% if remaining_min >= 0 %}
-            {{ (remaining_min + cooldown_min + buffer_min) * 60 }}
+            {{ (remaining_min + buffer_min) * 60 }}
           {% else %}{{ remaining_cap }}{% endif %}
     - action: script.x1c_enclosure_set_safety_timer
       data:
@@ -756,7 +667,7 @@ automation:
         min_sec: 300
 
   - id: x1c_enclosure_print_ended
-    alias: 'X1C Enclosure: Print Ended → Cooldown'
+    alias: 'X1C Enclosure: Print Ended → OFF'
     mode: restart
     trigger:
     - platform: state
@@ -779,34 +690,6 @@ automation:
       entity_id: climate.x1c_gehause_thermostat
       state: heat
     action:
-    - variables:
-        st: "{{ states('sensor.x1c_00m00a2c0601660_druckstatus') | lower }}"
-    - choose:
-      - conditions: "{{ st in ['failed','fehlgeschlagen','offline'] }}"
-        sequence:
-        - action: script.x1c_enclosure_turn_off
-      default:
-      - action: input_select.select_option
-        target:
-          entity_id: input_select.x1c_enclosure_mode
-        data:
-          option: nachlauf
-      - action: timer.start
-        target:
-          entity_id: timer.x1c_enclosure_post_print
-        data:
-          duration: '00:35:00'
-      - action: script.x1c_enclosure_cooldown
-
-  - id: x1c_enclosure_cooldown_backup
-    alias: 'X1C Enclosure: Cooldown Backup → OFF'
-    mode: single
-    trigger:
-    - platform: event
-      event_type: timer.finished
-      event_data:
-        entity_id: timer.x1c_enclosure_post_print
-    action:
     - action: script.x1c_enclosure_turn_off
 
   # === PERIODIC ===
@@ -823,9 +706,7 @@ automation:
     action:
     - variables:
         print_active: "{{ is_state('binary_sensor.x1c_druck_aktiv', 'on') }}"
-        post_print_active: "{{ is_state('timer.x1c_enclosure_post_print', 'active') }}"
         remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
-        cooldown_min: "{{ states('input_number.x1c_enclosure_cooldown_minutes') | int(20) }}"
         buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
         preheat_min: "{{ states('input_number.x1c_enclosure_preheat_timeout_minutes') | int(60) }}"
         start_str: "{{ states('input_datetime.x1c_enclosure_session_started') }}"
@@ -844,10 +725,10 @@ automation:
           data:
             desired_sec: >
               {% if remaining_min >= 0 %}
-                {{ (remaining_min + cooldown_min + buffer_min) * 60 }}
+                {{ (remaining_min + buffer_min) * 60 }}
               {% else %}{{ remaining_cap }}{% endif %}
             min_sec: 300
-      - conditions: '{{ not print_active and not post_print_active }}'
+      - conditions: '{{ not print_active }}'
         sequence:
         - action: script.x1c_enclosure_set_safety_timer
           data:
@@ -993,13 +874,12 @@ automation:
     - delay: '00:00:10'
     - variables:
         remaining_min: "{{ states('sensor.x1c_druck_restzeit_min') | int(-1) }}"
-        cooldown_min: "{{ states('input_number.x1c_enclosure_cooldown_minutes') | int(20) }}"
         buffer_min: "{{ states('input_number.x1c_enclosure_safety_buffer_minutes') | int(10) }}"
     - action: script.x1c_enclosure_set_safety_timer
       data:
         desired_sec: >
           {% if remaining_min >= 0 %}
-            {{ (remaining_min + cooldown_min + buffer_min) * 60 }}
+            {{ (remaining_min + buffer_min) * 60 }}
           {% else %}7200{% endif %}
         min_sec: 300
     - action: persistent_notification.create
