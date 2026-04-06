@@ -175,8 +175,11 @@ template:
       icon: mdi:timer-sand
       unit_of_measurement: min
       state: >
+        {% set status = states('sensor.x1c_00m00a2c0601660_druckstatus') | lower %}
+        {% set step = states('sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt') | lower %}
         {% set v = states('sensor.x1c_00m00a2c0601660_verbleibende_zeit') %}
-        {% if v in ['unknown','unavailable','none',''] %}0
+        {% if status != 'running' or step == 'idle' %}0
+        {% elif v in ['unknown','unavailable','none',''] %}0
         {% else %}{{ (v | float(0) * 60) | round(0) }}
         {% endif %}
 
