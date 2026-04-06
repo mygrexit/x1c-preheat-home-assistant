@@ -750,6 +750,17 @@ automation:
       entity_id: binary_sensor.x1c_druck_aktiv
       from: 'on'
       to: 'off'
+    # Also fire if the print fails/finishes while we were still in prep/preheat
+    # (druck_aktiv was never 'on' because step != printing, so the trigger above
+    # would never fire and the heater would stay on forever).
+    - platform: state
+      entity_id: sensor.x1c_00m00a2c0601660_druckstatus
+      to:
+      - failed
+      - fehlgeschlagen
+      - finish
+      - finished
+      - offline
     condition:
     - condition: state
       entity_id: climate.x1c_gehause_thermostat
