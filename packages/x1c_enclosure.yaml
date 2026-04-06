@@ -920,9 +920,11 @@ automation:
     - condition: state
       entity_id: climate.x1c_gehause_thermostat
       state: heat
+    # Use the printer's internal chamber sensor (authoritative for chamber temp).
+    # The Shelly heater sensor is a hotspot near the PTC and reads ~10°C high.
     - condition: template
       value_template: >
-        {{ states('sensor.x1c_heater_temperatur') | float(0)
+        {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') | float(0)
            < states('input_number.x1c_enclosure_preheat_target') | float(45) }}
     action:
     - action: button.press
@@ -941,7 +943,8 @@ automation:
         message: >
           Print paused — chamber heating to
           {{ states('input_number.x1c_enclosure_preheat_target') | int }}°C.
-          Currently: {{ states('sensor.x1c_heater_temperatur') | round(1) }}°C.
+          Currently: {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') | round(0) }}°C
+          (heater {{ states('sensor.x1c_heater_temperatur') | round(1) }}°C).
           Auto-resume at target temp or after
           {{ states('input_number.x1c_enclosure_preheat_max_wait') | int }} min.
         notification_id: x1c_preheat_pause
@@ -952,7 +955,7 @@ automation:
     mode: single
     trigger:
     - platform: numeric_state
-      entity_id: sensor.x1c_heater_temperatur
+      entity_id: sensor.x1c_00m00a2c0601660_temperatur_im_druckraum
       above: input_number.x1c_enclosure_preheat_target
     # Second entrypoint: printer just paused AND chamber is already warm enough
     # (covers race: temp reached target before/during the pause trigger firing).
@@ -970,7 +973,7 @@ automation:
       state: heat
     - condition: template
       value_template: >
-        {{ states('sensor.x1c_heater_temperatur') | float(0)
+        {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') | float(0)
            >= states('input_number.x1c_enclosure_preheat_target') | float(45) }}
     action:
     - action: button.press
@@ -998,7 +1001,7 @@ automation:
       data:
         title: X1C Enclosure
         message: >
-          Chamber reached {{ states('sensor.x1c_heater_temperatur') | round(1) }}°C.
+          Chamber reached {{ states('sensor.x1c_00m00a2c0601660_temperatur_im_druckraum') | round(0) }}°C.
           Print resuming.
         notification_id: x1c_preheat_pause
 
