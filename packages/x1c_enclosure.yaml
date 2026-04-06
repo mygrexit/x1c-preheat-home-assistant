@@ -214,7 +214,9 @@ script:
         entity_id: script.x1c_enclosure_cooldown
     - action: fan.turn_off
       target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+        entity_id:
+        - fan.x1c_00m00a2c0601660_druckraumlufter
+        - fan.x1c_00m00a2c0601660_bauteillufter
     - action: input_select.select_option
       target:
         entity_id: input_select.x1c_enclosure_mode
@@ -308,7 +310,9 @@ script:
       state: fehler
     - action: fan.turn_off
       target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+        entity_id:
+        - fan.x1c_00m00a2c0601660_druckraumlufter
+        - fan.x1c_00m00a2c0601660_bauteillufter
     - action: input_select.select_option
       target:
         entity_id: input_select.x1c_enclosure_mode
@@ -618,9 +622,11 @@ automation:
         entity_id:
         - timer.x1c_enclosure_post_print
         - timer.x1c_enclosure_safety
+    # Aux fan (part cooling) to 100% during preheat to accelerate chamber warm-up.
+    # Chamber fan (druckraumlufter) stays untouched — it's only ramped during cooldown.
     - action: fan.set_percentage
       target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+        entity_id: fan.x1c_00m00a2c0601660_bauteillufter
       data:
         percentage: 100
     - variables:
@@ -676,7 +682,9 @@ automation:
         entity_id: script.x1c_enclosure_cooldown
     - action: fan.turn_off
       target:
-        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+        entity_id:
+        - fan.x1c_00m00a2c0601660_druckraumlufter
+        - fan.x1c_00m00a2c0601660_bauteillufter
     - action: input_select.select_option
       target:
         entity_id: input_select.x1c_enclosure_mode
