@@ -37,6 +37,9 @@ views:
             name: Power
           - type: tile
             entity: fan.x1c_00m00a2c0601660_druckraumlufter
+            name: Chamber Fan
+          - type: tile
+            entity: fan.x1c_00m00a2c0601660_bauteillufter
             name: Aux Fan
 
       - type: grid
