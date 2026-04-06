@@ -175,10 +175,17 @@ template:
     - name: "X1C Print Active"
       unique_id: x1c_print_active
       icon: mdi:printer-3d
+      # Any pause state counts as active so a (preheat-)pause, user pause,
+      # filament-runout pause, or layer pause does not flip this sensor off
+      # and trip print_ended → turn_off mid-print. Match any step containing
+      # "pause" so we cover paused_user / paused_other / layer_pause / etc.
+      # without enumerating Bambu firmware variants.
+      # Real end-states (finish/failed/offline) live in druckstatus and are
+      # handled by print_ended's secondary trigger.
       state: >
         {% set status = states('sensor.x1c_00m00a2c0601660_druckstatus') | lower %}
         {% set step = states('sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt') | lower %}
-        {{ status == 'running' and step == 'printing' }}
+        {{ status in ['running', 'pause'] and (step == 'printing' or 'pause' in step) }}
 
 # --- Shell Command for Git Sync ---
 shell_command:
@@ -689,6 +696,14 @@ automation:
     - condition: state
       entity_id: climate.x1c_gehause_thermostat
       state: heat
+    # Defense in depth: never shut the heater down while the print is paused.
+    # The binary sensor already covers any 'pause*' step, but if a future
+    # firmware introduces a pause state we forgot to match, this guard catches
+    # it. Print_ended must only fire when the job is truly over.
+    - condition: template
+      value_template: >
+        {% set step = states('sensor.x1c_00m00a2c0601660_aktueller_arbeitsschritt') | lower %}
+        {{ 'pause' not in step }}
     action:
     - action: script.x1c_enclosure_turn_off
 
