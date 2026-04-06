@@ -36,9 +36,12 @@
 ## Git Repo (x1c-preheat only)
 
 - **Repo:** github.com/mygrexit/x1c-preheat-home-assistant
-- **Auto-sync:** GitHub webhook → HA webhook automation → git pull + reload
+- **Auto-sync:** GitHub webhook → HA webhook automation → `git pull` in `/config/bambu-heater/` → reload
 - **Webhook ID:** `x1c-git-sync-06f81528bbb0314024bdda0a2a430f34`
 - **Git user:** `mygrexit`
+- **Repo location on HA:** `/config/bambu-heater/` (NOT `/config/` itself)
+- **Live file is a symlink:** `/config/packages/x1c_enclosure.yaml` → `/config/bambu-heater/packages/x1c_enclosure.yaml`. Required so that `git pull` is actually picked up by HA. Without the symlink, pulls are invisible to HA.
+- **Git safe.directory:** Must be set globally for root (`/homeassistant/bambu-heater` AND `/config/bambu-heater`), otherwise `git pull` fails with „dubious ownership" and the shell_command swallows the error silently.
 - Door siren package is NOT in git (deployed directly to HA)
 
 ## Conventions
