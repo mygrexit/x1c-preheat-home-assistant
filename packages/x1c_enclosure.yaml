@@ -195,7 +195,7 @@ template:
 # --- Shell Command for Git Sync ---
 shell_command:
   x1c_git_pull: >
-    cd /config/bambu-heater && git pull --ff-only 2>&1 || echo "GIT PULL FAILED"
+    cd /config/bambu-heater && git -c safe.directory=/config/bambu-heater -c safe.directory=/homeassistant/bambu-heater pull --ff-only 2>&1 || echo "GIT PULL FAILED"
 
 # --- Scripts ---
 script:
