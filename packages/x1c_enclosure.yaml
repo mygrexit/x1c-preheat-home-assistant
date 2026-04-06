@@ -633,8 +633,13 @@ automation:
         entity_id:
         - timer.x1c_enclosure_post_print
         - timer.x1c_enclosure_safety
+    # Chamber fan off at start — must be 0 so heat accumulates, only ramped during cooldown.
+    - action: fan.set_percentage
+      target:
+        entity_id: fan.x1c_00m00a2c0601660_druckraumlufter
+      data:
+        percentage: 0
     # Aux fan (part cooling) to 100% during preheat to accelerate chamber warm-up.
-    # Chamber fan (druckraumlufter) stays untouched — it's only ramped during cooldown.
     - action: fan.set_percentage
       target:
         entity_id: fan.x1c_00m00a2c0601660_bauteillufter
