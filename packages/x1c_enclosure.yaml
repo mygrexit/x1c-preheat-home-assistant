@@ -944,3 +944,17 @@ automation:
           Git pull + reload triggered by webhook.
           ({{ now().strftime('%Y-%m-%d %H:%M:%S') }})
         notification_id: x1c_git_sync
+
+  - id: x1c_auto_sync_hourly
+    alias: 'X1C: Hourly Git Pull + Reload'
+    description: >
+      Polls GitHub every hour. Webhook fallback because hassio.rlxd.xyz
+      resolves to a private LAN IP that GitHub cannot reach. Trigger
+      script.x1c_sync_from_git manually if you need an immediate sync.
+    mode: single
+    trigger:
+    - platform: time_pattern
+      hours: /1
+      minutes: 0
+    action:
+    - action: script.x1c_sync_from_git
