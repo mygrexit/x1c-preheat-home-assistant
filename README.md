@@ -8,7 +8,7 @@ Automatic enclosure heating for the BambuLab X1C with a PTC heater, controlled v
 
 - **Auto-Preheat:** Detects ABS/ASA/PC prints based on bed target temperature (≥85°C) and automatically preheats the enclosure
 - **Pause/Resume:** Pauses the print at the first layer if the chamber is still cold, auto-resumes once target temperature is reached
-- **Controlled Cooldown:** 30-minute cooldown phase after printing (heater ramps down, fan ramps up incrementally)
+- **Heater Off at Print End:** When the print finishes, the heater shuts off immediately. Fans are left to the printer (which manages them as part of its own end-of-print routine).
 - **Safety:** 7 independent safety layers (dual-sensor overtemp, sensor divergence, power watchdog, comm-loss, timer hardcap, HA restart protection, heater interlock)
 
 ## Hardware
@@ -30,8 +30,8 @@ Everything lives in a single package file: [`packages/x1c_enclosure.yaml`](packa
 ```
 ┌─────────────────────────────────────────────────┐
 │  State Machine                                  │
-│  off → preheating → printing → cooldown → off   │
-│                                       error ↗   │
+│  off → preheating → printing → off              │
+│                                  error ↗        │
 ├─────────────────────────────────────────────────┤
 │  Generic Thermostat (UI + Safety Cutoff)        │
 │  └→ Shelly Plus 1PM → PTC Heater               │
@@ -47,7 +47,7 @@ Everything lives in a single package file: [`packages/x1c_enclosure.yaml`](packa
 └─────────────────────────────────────────────────┘
 ```
 
-**17 automations, 7 scripts, 10 configurable parameters** — all in one YAML file.
+**20 automations, 5 scripts, 9 configurable parameters** — all in one YAML file.
 
 ## Setup
 
